@@ -1,0 +1,14 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "functions": {
+    "api/fetch.js": { "maxDuration": 15 },
+    "api/search.js": { "maxDuration": 15 }
+  }
+}
