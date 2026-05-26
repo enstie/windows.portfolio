@@ -25,11 +25,59 @@ export default async function handler(req, res) {
     clearTimeout(timeout);
 
     const contentType = response.headers.get('content-type') || 'text/html; charset=utf-8';
-    const body = await response.text();
+    let body = await response.text();
 
+    // For HTML pages, inject a <base> tag so all relative URLs (CSS, images, scripts, links)
+    // resolve against the ORIGINAL domain rather than our Vercel domain.
+    // Also inject a small script that rewrites absolute-path links (/foo → https://origin/foo)
+    // so clicking links inside the iframe proxies them through us correctly.
+    if (contentType.includes('text/html')) {
+      const finalUrl = response.url || targetUrl; // follow redirects
+      const origin = new URL(finalUrl).origin;   // e.g. https://en.wikipedia.org
+
+      const baseTag = `<base href="${origin}/">`;
+
+      // Small script: intercept clicks so navigation stays inside the proxy
+      const interceptScript = `<script>
+(function(){
+  var ORIGIN = ${JSON.stringify(origin)};
+  document.addEventListener('click', function(e){
+    var a = e.target.closest('a');
+    if(!a || !a.href) return;
+    var href = a.href;
+    if(href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:') || href.startsWith('#')) return;
+    e.preventDefault();
+    // Turn any link into a proxy URL and navigate the iframe to it
+    var proxyHref = '/api/fetch?url=' + encodeURIComponent(href);
+    window.location.href = proxyHref;
+  }, true);
+})();
+</script>`;
+
+      // Inject base tag right after <head>
+      if (/<head[\s>]/i.test(body)) {
+        body = body.replace(/(<head[^>]*>)/i, `$1${baseTag}`);
+      } else {
+        body = baseTag + body;
+      }
+
+      // Inject click interceptor before </body>
+      if (/<\/body>/i.test(body)) {
+        body = body.replace(/<\/body>/i, `${interceptScript}</body>`);
+      } else {
+        body += interceptScript;
+      }
+    }
+
+    // Only forward Content-Type — intentionally drop X-Frame-Options and
+    // Content-Security-Policy so the browser allows iframe embedding.
     res.setHeader('Content-Type', contentType);
-    return res.status(response.status).send(body);
+    return res.status(200).send(body);
   } catch (err) {
-    return res.status(502).json({ error: err.message, url: targetUrl });
+    const isTimeout = err.name === 'AbortError';
+    return res.status(502).json({
+      error: isTimeout ? 'Request timed out after 12 seconds' : err.message,
+      url: targetUrl
+    });
   }
 }
