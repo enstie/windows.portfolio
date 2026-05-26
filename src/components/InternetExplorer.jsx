@@ -173,20 +173,11 @@ async function fetchFullWebSearch(query) {
   return { results: fallbackResults, engine: 'DuckDuckGo + Wikipedia' };
 }
 
-// Fetch any external page via the local Vite CORS proxy middleware (/api/fetch)
-// The Vite dev server fetches the page server-side (Node.js) with real browser headers,
-// bypassing CORS entirely. No external proxy services needed.
-const fetchHtmlViaProxy = async (targetUrl) => {
-  const proxyEndpoint = `/api/fetch?url=${encodeURIComponent(targetUrl)}`;
-  const response = await fetch(proxyEndpoint);
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-    throw new Error(err.error || `HTTP ${response.status}`);
-  }
-  const html = await response.text();
-  if (!html || html.length < 100) throw new Error('Empty response from server');
-  return html;
-};
+// Build a proxy src URL — the iframe loads this directly so the browser
+// renders the real page natively (CSS, images, scripts all work).
+function proxyUrl(targetUrl) {
+  return `/api/fetch?url=${encodeURIComponent(targetUrl)}`;
+}
 
 export default function InternetExplorer({
   vfs,
@@ -201,8 +192,8 @@ export default function InternetExplorer({
   const [inputUrl, setInputUrl] = useState('http://www.google.com');
   const [isLoading, setIsLoading] = useState(false);
   
-  // Real browser iframe source content
-  const [iframeSrcDoc, setIframeSrcDoc] = useState('');
+  // Proxy iframe src — points at /api/fetch?url=... so the browser loads the real page
+  const [iframeSrc, setIframeSrc] = useState('');
 
   // Search companion sidebar state
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -232,145 +223,16 @@ export default function InternetExplorer({
     return () => window.removeEventListener('ie-load-url', handler);
   }, []);
 
-  // Link absolute URL parser helper
-  const rewriteHtmlLinks = (html, baseUrl) => {
-    try {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-
-      const makeAbsolute = (urlStr) => {
-        try {
-          return new URL(urlStr, baseUrl).href;
-        } catch (e) {
-          return urlStr;
-        }
-      };
-
-      // Rewrite links
-      doc.querySelectorAll('[href]').forEach(el => {
-        const val = el.getAttribute('href');
-        if (val && !val.startsWith('data:') && !val.startsWith('javascript:') && !val.startsWith('#')) {
-          el.setAttribute('href', makeAbsolute(val));
-        }
-      });
-
-      // Rewrite images, scripts, etc.
-      doc.querySelectorAll('[src]').forEach(el => {
-        const val = el.getAttribute('src');
-        if (val && !val.startsWith('data:') && !val.startsWith('javascript:')) {
-          el.setAttribute('src', makeAbsolute(val));
-        }
-      });
-
-      // Set base element
-      if (!doc.querySelector('base')) {
-        const base = doc.createElement('base');
-        base.setAttribute('href', baseUrl);
-        doc.head.insertBefore(base, doc.head.firstChild);
-      }
-
-      return doc.documentElement.outerHTML;
-    } catch (e) {
-      console.error('Error rewriting HTML links:', e);
-      return html;
-    }
-  };
-
-  // Inject click and submit listeners into the document HTML
-  const injectClickInterceptor = (html) => {
-    const scriptTag = `
-      <script>
-        (function() {
-          // Intercept all links
-          document.addEventListener('click', function(e) {
-            var a = e.target.closest('a');
-            if (a && a.href) {
-              if (a.href.startsWith('mailto:') || a.href.startsWith('tel:') || a.href.startsWith('javascript:') || (a.getAttribute('href') && a.getAttribute('href').startsWith('#'))) {
-                return;
-              }
-              e.preventDefault();
-              window.parent.postMessage({ type: 'IE_NAVIGATE', url: a.href }, '*');
-            }
-          }, true);
-
-          // Intercept form submissions
-          document.addEventListener('submit', function(e) {
-            var form = e.target;
-            if (form && form.action) {
-              e.preventDefault();
-              var actionUrl = form.action;
-              var method = (form.method || 'GET').toUpperCase();
-              if (method === 'GET') {
-                var params = new URLSearchParams(new FormData(form)).toString();
-                var sep = actionUrl.indexOf('?') !== -1 ? '&' : '?';
-                window.parent.postMessage({ type: 'IE_NAVIGATE', url: actionUrl + sep + params }, '*');
-              }
-            }
-          }, true);
-        })();
-      </script>
-    `;
-    if (html.includes('</body>')) {
-      return html.replace('</body>', scriptTag + '</body>');
-    }
-    return html + scriptTag;
-  };
-
-  // Fetch live page using proxy helper
-  async function fetchExternalPage(targetUrl) {
+  // Load a page: point the iframe at the proxy URL directly
+  function fetchExternalPage(targetUrl) {
     setIsLoading(true);
-    try {
-      const html = await fetchHtmlViaProxy(targetUrl);
-      if (html) {
-        const rewrittenHtml = rewriteHtmlLinks(html, targetUrl);
-        const finalHtml = injectClickInterceptor(rewrittenHtml);
-        setIframeSrcDoc(finalHtml);
-      } else {
-        setIframeSrcDoc(`<html><body style="font-family:Tahoma,sans-serif;padding:20px;"><h3>Error: Webpage content is empty</h3></body></html>`);
-      }
-    } catch (err) {
-      console.error(err);
-      setIframeSrcDoc(`
-        <html>
-          <head>
-            <style>
-              body { font-family: Tahoma, sans-serif; background-color: #ffffff; color: #000000; padding: 20px; font-size: 13px; }
-              h2 { color: #0a5f9b; font-size: 18px; margin-top: 0; }
-              .error-box { border: 1.5px solid #cc0000; padding: 12px; background-color: #fff0f0; margin-top: 15px; border-radius: 2px; }
-              .hint { color: #555; margin-top: 12px; font-size: 12px; }
-            </style>
-          </head>
-          <body>
-            <h2>Internet Explorer cannot display the webpage</h2>
-            <p>The page at <strong>${targetUrl}</strong> could not be loaded.</p>
-            <div class="error-box">
-              <strong>Error:</strong> ${err.message || 'Unknown error'}
-            </div>
-            <p class="hint">This can happen if the website blocks automated requests, requires a login, or is currently unavailable. Try another site.</p>
-          </body>
-        </html>
-      `);
-    }
-    setIsLoading(false);
+    // Point the iframe directly at our proxy — browser renders it natively
+    setIframeSrc(proxyUrl(targetUrl));
+    // Give the iframe a moment to start loading, then hide the spinner
+    setTimeout(() => setIsLoading(false), 800);
   }
 
-  // Listen to iframe navigations
-  useEffect(() => {
-    const handleIframeNav = (e) => {
-      if (e.data && e.data.type === 'IE_NAVIGATE') {
-        const nextUrl = e.data.url;
-        setUrl(nextUrl);
-        setHistory(prev => {
-          const nextHist = prev.slice(0, historyIndex + 1);
-          nextHist.push(nextUrl);
-          setHistoryIndex(nextHist.length - 1);
-          return nextHist;
-        });
-      }
-    };
-    window.addEventListener('message', handleIframeNav);
-    return () => window.removeEventListener('message', handleIframeNav);
-  }, [historyIndex, history]);
+  // No postMessage listener needed — iframe navigates itself via the proxy src
 
   // Fetch page if url updates to external
   useEffect(() => {
@@ -821,13 +683,14 @@ export default function InternetExplorer({
                 </div>
               )}
 
-              {/* REAL WEBSITE IFRAME — loads any URL via local CORS proxy */}
-              {isExternalUrl(url) && (
+              {/* REAL WEBSITE — iframe src points at /api/fetch?url=... */}
+              {isExternalUrl(url) && iframeSrc && (
                 <iframe
+                  key={iframeSrc}
                   title="Internet Explorer Browser Viewport"
-                  srcDoc={iframeSrcDoc}
+                  src={iframeSrc}
                   style={{ width: '100%', height: '100%', border: 'none', backgroundColor: '#ffffff' }}
-                  sandbox="allow-scripts allow-same-origin allow-forms"
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
                 />
               )}
             </>
