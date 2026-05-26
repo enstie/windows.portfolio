@@ -1,6 +1,6 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, memo } from 'react';
 
-export default function Window({
+const Window = memo(function Window({
   id,
   title,
   icon,
@@ -166,4 +166,6 @@ export default function Window({
       )}
     </div>
   );
-}
+});
+
+export default Window;

@@ -1,111 +1,146 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 
-// ── Passenger playlist using official YouTube video IDs ──────────────────────
+// ── Passenger playlist ────────────────────────────────────────────────────────
 const TRACKS = [
-  {
-    id: 'yMqL81Y2lQk',
-    title: 'Let Her Go',
-    album: 'All the Little Lights',
-    year: '2012',
-    duration: '4:14'
-  },
-  {
-    id: 'RBumgq5yVrA',
-    title: 'Passenger - Coins in a Fountain',
-    album: 'Whispers',
-    year: '2014',
-    duration: '3:50'
-  },
-  {
-    id: 'OgLQM4vBILo',
-    title: "I'll Be Your Man",
-    album: 'All the Little Lights',
-    year: '2012',
-    duration: '3:22'
-  },
-  {
-    id: 'Z7lqEBGcnns',
-    title: 'Catch in the Dark',
-    album: 'All the Little Lights',
-    year: '2012',
-    duration: '3:48'
-  },
-  {
-    id: '8lGRHlOqBFM',
-    title: 'Long Road',
-    album: 'Whispers',
-    year: '2014',
-    duration: '4:05'
-  },
-  {
-    id: 'hRe7p5QIbh4',
-    title: "Nothing's Changed",
-    album: 'Whispers II',
-    year: '2016',
-    duration: '4:30'
-  },
-  {
-    id: 'VIhfu6yBZDE',
-    title: 'Holes',
-    album: 'Whispers',
-    year: '2014',
-    duration: '3:38'
-  },
-  {
-    id: 'yqbvdxI-EJs',
-    title: 'Staring at the Stars',
-    album: 'All the Little Lights',
-    year: '2012',
-    duration: '4:10'
-  },
-  {
-    id: 'MjkFAX8HK9Q',
-    title: 'Golden Leaves',
-    album: 'All the Little Lights',
-    year: '2012',
-    duration: '3:28'
-  },
-  {
-    id: 'XCnAkBwLbAk',
-    title: 'Scare Away the Dark',
-    album: 'Whispers',
-    year: '2014',
-    duration: '4:02'
-  }
+  { id: 'yMqL81Y2lQk', title: 'Let Her Go',          album: 'All the Little Lights', year: '2012', duration: '4:14' },
+  { id: 'OgLQM4vBILo', title: "I'll Be Your Man",     album: 'All the Little Lights', year: '2012', duration: '3:22' },
+  { id: 'Z7lqEBGcnns', title: 'Catch in the Dark',    album: 'All the Little Lights', year: '2012', duration: '3:48' },
+  { id: 'MjkFAX8HK9Q', title: 'Golden Leaves',        album: 'All the Little Lights', year: '2012', duration: '3:28' },
+  { id: 'yqbvdxI-EJs', title: 'Staring at the Stars', album: 'All the Little Lights', year: '2012', duration: '4:10' },
+  { id: 'XCnAkBwLbAk', title: 'Scare Away the Dark',  album: 'Whispers',              year: '2014', duration: '4:02' },
+  { id: 'VIhfu6yBZDE', title: 'Holes',                album: 'Whispers',              year: '2014', duration: '3:38' },
+  { id: 'RBumgq5yVrA', title: 'Coins in a Fountain',  album: 'Whispers',              year: '2014', duration: '3:50' },
+  { id: '8lGRHlOqBFM', title: 'Long Road',            album: 'Whispers',              year: '2014', duration: '4:05' },
+  { id: 'hRe7p5QIbh4', title: "Nothing's Changed",    album: 'Whispers II',           year: '2016', duration: '4:30' },
 ];
 
-export default function MediaPlayer() {
-  const [currentIdx, setCurrentIdx]   = useState(0);
-  const [isPlaying, setIsPlaying]     = useState(false);
-  const [volume, setVolume]           = useState(80);
-  const [visMode, setVisMode]         = useState('bars');
-  const [elapsed, setElapsed]         = useState(0);
-  const [isMuted, setIsMuted]         = useState(false);
-  const [playerReady, setPlayerReady] = useState(false);
-  const [showVideo, setShowVideo]     = useState(false); // toggle visualizer ↔ video
+// Build a YouTube embed URL. autoplay=1 triggers immediate play (requires prior user gesture).
+function embedUrl(videoId, autoplay = false) {
+  return (
+    `https://www.youtube.com/embed/${videoId}` +
+    `?enablejsapi=1&autoplay=${autoplay ? 1 : 0}` +
+    `&controls=0&modestbranding=1&rel=0&fs=0&iv_load_policy=3&cc_load_policy=0`
+  );
+}
 
-  const playerRef   = useRef(null);  // YT.Player instance
+// Send a command to the YouTube iframe via postMessage (instant, no API needed)
+function ytCmd(iframe, func, args = []) {
+  iframe?.contentWindow?.postMessage(
+    JSON.stringify({ event: 'command', func, args }),
+    '*'
+  );
+}
+
+export default function MediaPlayer() {
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [isPlaying,  setIsPlaying]  = useState(false);
+  const [volume,     setVolume]     = useState(80);
+  const [isMuted,    setIsMuted]    = useState(false);
+  const [visMode,    setVisMode]    = useState('bars');
+  const [showVideo,  setShowVideo]  = useState(false);
+  const [elapsed,    setElapsed]    = useState(0);
+  // iframeSrc drives what the iframe plays. Once set with autoplay=1, it starts immediately.
+  const [iframeSrc, setIframeSrc]   = useState(() => embedUrl(TRACKS[0].id, false));
+
   const iframeRef   = useRef(null);
   const canvasRef   = useRef(null);
   const timerRef    = useRef(null);
   const visTimerRef = useRef(null);
-  const containerId = 'yt-player-container';
 
   const track = TRACKS[currentIdx];
 
-  // ── Canvas visualizer ──────────────────────────────────────────────────────
+  // ── Volume / mute via postMessage ─────────────────────────────────────────
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    ytCmd(iframe, 'setVolume', [isMuted ? 0 : volume]);
+  }, [volume, isMuted]);
+
+  // ── Elapsed timer ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (isPlaying) {
+      timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
+    } else {
+      clearInterval(timerRef.current);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [isPlaying]);
+
+  // ── Listen for YT iframe state messages ──────────────────────────────────
+  // YT sends postMessage events back when enablejsapi=1
+  useEffect(() => {
+    const onMsg = (e) => {
+      if (!e.data) return;
+      try {
+        const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+        if (data.event === 'infoDelivery' && data.info) {
+          // playerState: 1=playing, 2=paused, 0=ended
+          if (data.info.playerState === 1) setIsPlaying(true);
+          if (data.info.playerState === 2) setIsPlaying(false);
+          if (data.info.playerState === 0) {
+            // Auto-advance to next track
+            setCurrentIdx(prev => {
+              const next = (prev + 1) % TRACKS.length;
+              setElapsed(0);
+              setIframeSrc(embedUrl(TRACKS[next].id, true));
+              setIsPlaying(true);
+              return next;
+            });
+          }
+        }
+      } catch (_) {}
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  // ── Controls ──────────────────────────────────────────────────────────────
+  const handlePlayPause = useCallback(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    if (isPlaying) {
+      ytCmd(iframe, 'pauseVideo');
+      setIsPlaying(false);
+    } else {
+      ytCmd(iframe, 'playVideo');
+      setIsPlaying(true);
+    }
+  }, [isPlaying]);
+
+  const handleStop = useCallback(() => {
+    const iframe = iframeRef.current;
+    ytCmd(iframe, 'stopVideo');
+    setIsPlaying(false);
+    setElapsed(0);
+  }, []);
+
+  // Load a track: update src with autoplay=1 — starts playing immediately
+  const loadTrack = useCallback((idx) => {
+    setCurrentIdx(idx);
+    setElapsed(0);
+    setIframeSrc(embedUrl(TRACKS[idx].id, true));
+    setIsPlaying(true);
+  }, []);
+
+  const handlePrev = useCallback(() => {
+    loadTrack((currentIdx - 1 + TRACKS.length) % TRACKS.length);
+  }, [currentIdx, loadTrack]);
+
+  const handleNext = useCallback(() => {
+    loadTrack((currentIdx + 1) % TRACKS.length);
+  }, [currentIdx, loadTrack]);
+
+  // ── Canvas visualizer ─────────────────────────────────────────────────────
   const drawStatic = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#00081d';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = '#052e72';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#052e72'; ctx.lineWidth = 1;
     for (let i = 8; i < canvas.height; i += 8) {
       ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke();
     }
-    // draw idle bars low
     const bw = 8, gap = 2, count = Math.floor(canvas.width / (bw + gap));
     for (let i = 0; i < count; i++) {
       ctx.fillStyle = '#1a4a1a';
@@ -118,17 +153,13 @@ export default function MediaPlayer() {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const w = canvas.width, h = canvas.height;
-    ctx.fillStyle = '#00081d';
-    ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = '#052e72';
-    ctx.lineWidth = 1;
+    ctx.fillStyle = '#00081d'; ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = '#052e72'; ctx.lineWidth = 1;
     for (let i = 8; i < h; i += 8) {
       ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(w, i); ctx.stroke();
     }
-
     if (visMode === 'bars') {
-      const bw = 8, gap = 2;
-      const count = Math.floor(w / (bw + gap));
+      const bw = 8, gap = 2, count = Math.floor(w / (bw + gap));
       for (let i = 0; i < count; i++) {
         const bh = Math.floor(Math.random() * (h - 6)) + 4;
         const grad = ctx.createLinearGradient(0, h, 0, h - bh);
@@ -137,15 +168,12 @@ export default function MediaPlayer() {
         grad.addColorStop(1, '#ff3300');
         ctx.fillStyle = grad;
         ctx.fillRect(i * (bw + gap), h - bh, bw, bh);
-        // peak dot
         ctx.fillStyle = '#fff';
         ctx.fillRect(i * (bw + gap), h - bh - 2, bw, 2);
       }
     } else {
-      ctx.beginPath();
-      ctx.strokeStyle = '#00ffff';
-      ctx.lineWidth = 2;
-      const pts = 120, amp = Math.random() * 22 + 8, freq = Math.random() * 3 + 2;
+      ctx.beginPath(); ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 2;
+      const amp = Math.random() * 22 + 8, freq = Math.random() * 3 + 2;
       for (let x = 0; x < w; x++) {
         const y = h / 2 + Math.sin((x / w) * Math.PI * freq * 2 + Date.now() / 300) * amp;
         x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
@@ -156,7 +184,6 @@ export default function MediaPlayer() {
 
   useEffect(() => { drawStatic(); }, [drawStatic]);
 
-  // ── Start/stop visualizer animation ───────────────────────────────────────
   useEffect(() => {
     if (isPlaying && !showVideo) {
       visTimerRef.current = setInterval(drawVisualizer, 80);
@@ -167,141 +194,40 @@ export default function MediaPlayer() {
     return () => clearInterval(visTimerRef.current);
   }, [isPlaying, showVideo, drawVisualizer, drawStatic]);
 
-  // ── Elapsed timer ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (isPlaying) {
-      timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
-    } else {
-      clearInterval(timerRef.current);
-    }
-    return () => clearInterval(timerRef.current);
-  }, [isPlaying]);
-
-  // ── Load YouTube IFrame API once ───────────────────────────────────────────
-  useEffect(() => {
-    if (!window.YT) {
-      const tag = document.createElement('script');
-      tag.src = 'https://www.youtube.com/iframe_api';
-      document.head.appendChild(tag);
-    }
-
-    const initPlayer = () => {
-      if (playerRef.current) return;
-      playerRef.current = new window.YT.Player(containerId, {
-        height: '90',
-        width: '160',
-        videoId: TRACKS[0].id,
-        playerVars: {
-          autoplay: 0,
-          controls: 0,
-          modestbranding: 1,
-          rel: 0,
-          fs: 0,
-          iv_load_policy: 3,
-          cc_load_policy: 0,
-          disablekb: 1
-        },
-        events: {
-          onReady: (e) => {
-            setPlayerReady(true);
-            e.target.setVolume(80);
-          },
-          onStateChange: (e) => {
-            // 1 = playing, 2 = paused, 0 = ended
-            if (e.data === 1) { setIsPlaying(true); }
-            if (e.data === 2 || e.data === 0) { setIsPlaying(false); }
-            if (e.data === 0) {
-              // auto-advance
-              setCurrentIdx(prev => {
-                const next = (prev + 1) % TRACKS.length;
-                setTimeout(() => {
-                  playerRef.current?.loadVideoById(TRACKS[next].id);
-                  playerRef.current?.playVideo();
-                }, 300);
-                setElapsed(0);
-                return next;
-              });
-            }
-          }
-        }
-      });
-    };
-
-    if (window.YT && window.YT.Player) {
-      initPlayer();
-    } else {
-      window.onYouTubeIframeAPIReady = initPlayer;
-    }
-    return () => { /* keep player mounted */ };
-  }, []);
-
-  // ── Volume sync ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!playerRef.current || !playerReady) return;
-    if (isMuted) { playerRef.current.mute(); }
-    else { playerRef.current.unMute(); playerRef.current.setVolume(volume); }
-  }, [volume, isMuted, playerReady]);
-
-  // ── Control handlers ───────────────────────────────────────────────────────
-  const loadTrack = useCallback((idx) => {
-    setCurrentIdx(idx);
-    setElapsed(0);
-    if (playerRef.current && playerReady) {
-      playerRef.current.loadVideoById(TRACKS[idx].id);
-      playerRef.current.playVideo();
-    }
-  }, [playerReady]);
-
-  const handlePlayPause = useCallback(() => {
-    if (!playerRef.current || !playerReady) return;
-    if (isPlaying) { playerRef.current.pauseVideo(); }
-    else { playerRef.current.playVideo(); }
-  }, [isPlaying, playerReady]);
-
-  const handleStop = useCallback(() => {
-    if (!playerRef.current || !playerReady) return;
-    playerRef.current.stopVideo();
-    setIsPlaying(false);
-    setElapsed(0);
-  }, [playerReady]);
-
-  const handlePrev = useCallback(() => {
-    const idx = (currentIdx - 1 + TRACKS.length) % TRACKS.length;
-    loadTrack(idx);
-  }, [currentIdx, loadTrack]);
-
-  const handleNext = useCallback(() => {
-    const idx = (currentIdx + 1) % TRACKS.length;
-    loadTrack(idx);
-  }, [currentIdx, loadTrack]);
-
-  // Format seconds to mm:ss
   const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  const trackDuration = parseInt(track.duration.split(':')[0]) * 60 + parseInt(track.duration.split(':')[1]);
+  const progress = Math.min(100, (elapsed / trackDuration) * 100);
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="xp-media-player">
-      {/* Header */}
       <div className="player-inner-header">
         <span className="player-logo">Windows Media Player</span>
         <span style={{ color: '#aac', fontSize: 10 }}>Passenger Collection</span>
       </div>
 
       <div className="player-body">
-        {/* Visualizer / Video area */}
         <div className="vis-screen-wrapper" style={{ position: 'relative' }}>
-          {/* Hidden YouTube player (always mounted, handles actual audio) */}
-          <div
-            id={containerId}
+
+          {/* ── Persistent iframe: the actual audio engine ── */}
+          <iframe
+            ref={iframeRef}
+            src={iframeSrc}
+            width="160" height="90"
+            frameBorder="0"
+            allow="autoplay; encrypted-media"
+            allowFullScreen={false}
+            title="YouTube Player"
             style={{
               position: 'absolute', top: 0, left: 0,
-              width: 160, height: 90,
               opacity: showVideo ? 1 : 0,
               pointerEvents: showVideo ? 'auto' : 'none',
-              zIndex: showVideo ? 2 : 0
+              zIndex: showVideo ? 2 : 0,
+              border: 'none'
             }}
           />
 
-          {/* Canvas visualizer (shown when showVideo=false) */}
+          {/* ── Canvas visualizer ── */}
           <canvas
             ref={canvasRef}
             width="160" height="90"
@@ -315,7 +241,7 @@ export default function MediaPlayer() {
             onClick={() => setVisMode(v => v === 'bars' ? 'wave' : 'bars')}
           />
 
-          {/* Toggle video/viz button */}
+          {/* VID / VIZ toggle */}
           <button
             onClick={() => setShowVideo(v => !v)}
             title={showVideo ? 'Show Visualizer' : 'Show Video'}
@@ -329,21 +255,19 @@ export default function MediaPlayer() {
             {showVideo ? 'VIZ' : 'VID'}
           </button>
 
-          {/* Scrolling track info */}
-          <div className="track-scroll-banner" style={{ zIndex: 11, position: 'relative', marginTop: 90 }}>
+          {/* Scrolling banner */}
+          <div className="track-scroll-banner" style={{ position: 'relative', zIndex: 11, marginTop: 90 }}>
             <span className="scrolling-text">
               {isPlaying
                 ? `▶  ${track.title}  —  Passenger  •  ${track.album} (${track.year})`
-                : playerReady ? `⏹  ${track.title}` : 'Loading YouTube API…'}
+                : `⏹  ${track.title}  —  Passenger`}
             </span>
           </div>
         </div>
 
         {/* Playlist */}
         <div className="playlist-panel border-3d">
-          <div className="playlist-header">
-            Passenger — {TRACKS.length} tracks
-          </div>
+          <div className="playlist-header">Passenger — {TRACKS.length} tracks</div>
           <div className="playlist-tracks">
             {TRACKS.map((t, idx) => (
               <div
@@ -366,7 +290,6 @@ export default function MediaPlayer() {
       {/* Controls */}
       <div className="player-controls border-3d">
         <div className="control-buttons-row">
-          {/* Prev */}
           <button className="control-btn prev-btn" title="Previous" onClick={handlePrev}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style={{ display:'block', margin:'auto' }}>
               <polygon points="19 20 9 12 19 4 19 20" />
@@ -374,31 +297,27 @@ export default function MediaPlayer() {
             </svg>
           </button>
 
-          {/* Play/Pause */}
           <button
             className={`control-btn play-btn ${isPlaying ? 'playing' : ''}`}
             title={isPlaying ? 'Pause' : 'Play'}
             onClick={handlePlayPause}
           >
-            {isPlaying ? (
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style={{ display:'block', margin:'auto' }}>
-                <rect x="5" y="4" width="5" height="16" /><rect x="14" y="4" width="5" height="16" />
-              </svg>
-            ) : (
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style={{ display:'block', margin:'auto', transform:'translateX(1px)' }}>
-                <polygon points="6 3 20 12 6 21 6 3" />
-              </svg>
-            )}
+            {isPlaying
+              ? <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style={{ display:'block', margin:'auto' }}>
+                  <rect x="5" y="4" width="5" height="16" /><rect x="14" y="4" width="5" height="16" />
+                </svg>
+              : <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style={{ display:'block', margin:'auto', transform:'translateX(1px)' }}>
+                  <polygon points="6 3 20 12 6 21 6 3" />
+                </svg>
+            }
           </button>
 
-          {/* Stop */}
           <button className="control-btn stop-btn" title="Stop" onClick={handleStop}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style={{ display:'block', margin:'auto' }}>
               <rect x="4" y="4" width="16" height="16" />
             </svg>
           </button>
 
-          {/* Next */}
           <button className="control-btn next-btn" title="Next" onClick={handleNext}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style={{ display:'block', margin:'auto' }}>
               <polygon points="5 4 15 12 5 20 5 4" />
@@ -406,7 +325,6 @@ export default function MediaPlayer() {
             </svg>
           </button>
 
-          {/* Mute */}
           <button
             className="control-btn"
             title={isMuted ? 'Unmute' : 'Mute'}
@@ -423,17 +341,17 @@ export default function MediaPlayer() {
               ) : (
                 <>
                   <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" stroke="currentColor" strokeWidth="2" fill="none"/>
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" stroke="currentColor" strokeWidth="2" fill="none" />
                 </>
               )}
             </svg>
           </button>
         </div>
 
-        {/* Seek / elapsed */}
+        {/* Progress bar */}
         <div className="progress-seek-row">
           <div className="progress-bar-container player-seek">
-            <div className="progress-bar-fill player-seek-fill" style={{ width: `${Math.min(100, (elapsed / 250) * 100)}%` }} />
+            <div className="progress-bar-fill player-seek-fill" style={{ width: `${progress}%` }} />
           </div>
           <span className="progress-pct">{fmt(elapsed)}</span>
         </div>
