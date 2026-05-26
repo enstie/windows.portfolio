@@ -151,26 +151,60 @@ async function fetchFallbackSearch(query) {
   return results;
 }
 
-// PRIMARY: Full web search via Vite proxy → DuckDuckGo HTML (real internet results from any site)
-// FALLBACK: DDG Instant Answer + Wikipedia if proxy unavailable
+// Web search: DDG Instant Answer + Wikipedia OpenSearch (both CORS-native, work on any host)
+// DuckDuckGo blocks server-side scraping from cloud IPs so we use client-side APIs directly.
 async function fetchFullWebSearch(query) {
-  try {
-    const proxyUrl = `/api/search?q=${encodeURIComponent(query)}`;
-    const res = await fetch(proxyUrl);
-    if (res.ok) {
-      const html = await res.text();
-      if (html && (html.includes('result__snippet') || html.includes('result__a'))) {
-        const parsed = parseDuckDuckGoHTML(html);
-        if (parsed.length > 0) return { results: parsed, engine: 'DuckDuckGo' };
-      }
-    }
-  } catch (e) {
-    console.warn('Vite proxy search failed, falling back to DDG+Wikipedia:', e);
-  }
+  const results = [];
 
-  // Fallback
-  const fallbackResults = await fetchFallbackSearch(query);
-  return { results: fallbackResults, engine: 'DuckDuckGo + Wikipedia' };
+  // ── DuckDuckGo Instant Answer API ─────────────────────────────────────────
+  try {
+    const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+    const ddgData = await fetch(ddgUrl).then(r => r.json());
+
+    if (ddgData.AbstractText && ddgData.AbstractURL) {
+      results.push({
+        title: ddgData.Heading || query,
+        url: ddgData.AbstractURL,
+        snippet: ddgData.AbstractText,
+        displayUrl: ddgData.AbstractURL,
+        source: 'web'
+      });
+    }
+    (ddgData.RelatedTopics || [])
+      .filter(t => t.FirstURL && t.Text)
+      .slice(0, 6)
+      .forEach(t => {
+        if (!results.some(r => r.url === t.FirstURL)) {
+          results.push({
+            title: t.Text.split(' - ')[0] || t.Text,
+            url: t.FirstURL,
+            snippet: t.Text,
+            displayUrl: t.FirstURL,
+            source: 'web'
+          });
+        }
+      });
+  } catch (e) { console.warn('DDG Instant Answer failed:', e); }
+
+  // ── Wikipedia full-text search ────────────────────────────────────────────
+  try {
+    const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*&srlimit=10&srprop=snippet`;
+    const wikiData = await fetch(wikiUrl).then(r => r.json());
+    (wikiData?.query?.search || []).forEach(item => {
+      const pageUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(item.title.replace(/ /g, '_'))}`;
+      if (!results.some(r => r.url === pageUrl)) {
+        results.push({
+          title: item.title,
+          url: pageUrl,
+          snippet: item.snippet.replace(/<[^>]+>/g, '') + '...',
+          displayUrl: `en.wikipedia.org/wiki/${item.title.replace(/ /g, '_')}`,
+          source: 'web'
+        });
+      }
+    });
+  } catch (e) { console.warn('Wikipedia search failed:', e); }
+
+  return { results, engine: 'Web Search' };
 }
 
 // Build a proxy src URL — the iframe loads this directly so the browser
