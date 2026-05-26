@@ -56,7 +56,7 @@ const ICON = {
 // ── Initial window registry ────────────────────────────────────────────────
 const INITIAL_WINDOWS = [
   { id:'explorer',      title:'My Computer',          icon: ICON.computer,    isOpen:false, isMinimized:false, isMaximized:false, x:100, y:80,  width:650, height:480, zIndex:10 },
-  { id:'saas',          title:'SaaS Control Center',  icon: ICON.network,     isOpen:true,  isMinimized:false, isMaximized:false, x:180, y:40,  width:780, height:520, zIndex:20 },
+  { id:'saas',          title:'SaaS Control Center',  icon: ICON.network,     isOpen:false, isMinimized:false, isMaximized:false, x:180, y:40,  width:780, height:520, zIndex:20 },
   { id:'minesweeper',   title:'Minesweeper',           icon: ICON.minesweeper, isOpen:false, isMinimized:false, isMaximized:false, x:400, y:120, width:260, height:380, zIndex:10 },
   { id:'media-player',  title:'Windows Media Player',  icon: ICON.media,       isOpen:false, isMinimized:false, isMaximized:false, x:350, y:150, width:480, height:350, zIndex:10 },
   { id:'ie',            title:'Internet Explorer',     icon: ICON.ie,          isOpen:false, isMinimized:false, isMaximized:false, x:80,  y:100, width:680, height:500, zIndex:10 },
