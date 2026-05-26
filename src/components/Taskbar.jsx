@@ -93,7 +93,7 @@ export default function Taskbar({
                 <circle cx="12" cy="7" r="4" />
               </svg>
             </div>
-            <span className="username">Guest SaaS Engineer</span>
+            <span className="username">Entise Justice</span>
           </div>
 
           {/* Two Columns */}
