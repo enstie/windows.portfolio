@@ -1,8 +1,13 @@
-export default async function handler(req, res) {
-  // Allow CORS preflight
+// CommonJS format — required for Vercel Node.js serverless functions
+// when the project root has "type": "module"
+
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
   const targetUrl = req.query.url;
   if (!targetUrl) {
@@ -11,7 +16,7 @@ export default async function handler(req, res) {
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const timeout = setTimeout(() => controller.abort(), 12000);
 
     const response = await fetch(targetUrl, {
       signal: controller.signal,
@@ -26,6 +31,7 @@ export default async function handler(req, res) {
         'Cache-Control': 'no-cache',
       },
     });
+
     clearTimeout(timeout);
 
     const contentType =
@@ -33,8 +39,8 @@ export default async function handler(req, res) {
     const body = await response.text();
 
     res.setHeader('Content-Type', contentType);
-    res.status(response.status).send(body);
+    return res.status(response.status).send(body);
   } catch (err) {
-    res.status(502).json({ error: err.message, url: targetUrl });
+    return res.status(502).json({ error: err.message, url: targetUrl });
   }
-}
+};

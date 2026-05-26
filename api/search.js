@@ -1,8 +1,13 @@
-export default async function handler(req, res) {
-  // Allow CORS preflight
+// CommonJS format — required for Vercel Node.js serverless functions
+// when the project root has "type": "module"
+
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
   const query = req.query.q;
   if (!query) {
@@ -11,10 +16,10 @@ export default async function handler(req, res) {
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const timeout = setTimeout(() => controller.abort(), 12000);
 
-    // Forward to DuckDuckGo HTML search — same as the Vite proxy rewrite
     const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+
     const response = await fetch(ddgUrl, {
       signal: controller.signal,
       headers: {
@@ -27,13 +32,14 @@ export default async function handler(req, res) {
         'Cache-Control': 'no-cache',
       },
     });
+
     clearTimeout(timeout);
 
     const body = await response.text();
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.status(200).send(body);
+    return res.status(200).send(body);
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    return res.status(502).json({ error: err.message });
   }
-}
+};

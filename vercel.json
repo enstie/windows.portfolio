@@ -1,14 +1,14 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "functions": {
+    "api/fetch.js":  { "runtime": "nodejs20.x", "maxDuration": 15 },
+    "api/search.js": { "runtime": "nodejs20.x", "maxDuration": 15 }
+  },
   "rewrites": [
     {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
-  ],
-  "functions": {
-    "api/fetch.js": { "maxDuration": 15 },
-    "api/search.js": { "maxDuration": 15 }
-  }
+  ]
 }
